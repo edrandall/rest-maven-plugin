@@ -6,25 +6,24 @@
   <parent>
     <groupId>org.codehaus.mojo</groupId>
     <artifactId>mojo-parent</artifactId>
-    <version>38</version>
+    <version>50</version>
   </parent>
 
-  <groupId>com.github.cjnygard</groupId>
+  <groupId>com.github.erandall</groupId>
   <artifactId>rest-maven-plugin</artifactId>
-  <version>0.1.5-SNAPSHOT</version>
+  <version>1.0.0-SNAPSHOT</version>
   <packaging>maven-plugin</packaging>
 
   <name>${project.groupId}:${project.artifactId}</name>
 
-  <description>The REST Request Maven Plugin is meant to provide an
-  easy way to interface to REST services via the POST operation to
-  send data files to the REST URL and retrieve (and store) the
-  results.</description>
+  <description>The REST Request Maven Plugin is intended to provide a
+  simple interface with REST services via HEAD, GET and POST methods.
+  </description>
 
   <!-- mvn -Prelease release:clean release:prepare -->
   <!-- mvn -Prelease release:perform -->
   <!-- cd target/checkout && mvn -Prelease nexus-staging:release -->
-  <url>http://github.com/cjnygard/rest-maven-plugin</url>
+  <url>http://github.com/erandall/rest-maven-plugin</url>
   <licenses>
     <license>
       <name>The Apache License, Version 2.0</name>
@@ -38,12 +37,18 @@
       <organization>Self</organization>
       <organizationUrl>http://github.com/cjnygard</organizationUrl>
     </developer>
+    <developer>
+      <name>Ed Randall</name>
+      <email>ed.randall@ingenotech.com</email>
+      <organization>Self</organization>
+      <organizationUrl>http://github.com/erandall</organizationUrl>
+    </developer>
   </developers>
   <scm>
-    <developerConnection>scm:git:ssh://git@github.com/cjnygard/rest-maven-plugin.git</developerConnection>
-    <connection>scm:git:https://github.com/cjnygard/rest-maven-plugin.git</connection>
-    <url>https://github.com/cjnygard/rest-maven-plugin.git</url>
-    <tag>rest-maven-plugin-0.1.3</tag>
+    <developerConnection>scm:git:ssh://git@github.com/erandall/rest-maven-plugin.git</developerConnection>
+    <connection>scm:git:https://github.com/erandall/rest-maven-plugin.git</connection>
+    <url>https://github.com/erandall/rest-maven-plugin.git</url>
+    <tag>rest-maven-plugin-1.0.0</tag>
   </scm>
 
   <properties>
@@ -51,38 +56,21 @@
     <!--netbeans.checkstyle.format>false</netbeans.checkstyle.format-->
     <netbeans.checkstyle.format>true</netbeans.checkstyle.format>
 
-    <nexus-staging-maven-plugin.version>1.6.3</nexus-staging-maven-plugin.version>
-    <maven-release-plugin.version>2.5</maven-release-plugin.version>
-    <maven-core.version>3.3.9</maven-core.version>
-    <maven-compat.version>3.3.9</maven-compat.version>
-    <maven-model.version>3.3.9</maven-model.version>
-    <maven-plugin-api.version>3.3.9</maven-plugin-api.version>
+    <maven-core.version>3.5.3</maven-core.version>
+    <maven-model.version>3.5.3</maven-model.version>
     <maven-project.version>2.2.1</maven-project.version>
-    <maven-artifact.version>3.3.9</maven-artifact.version>
-    <maven-aether-provider.version>3.3.9</maven-aether-provider.version>
-    <maven-plugin-annotations.version>3.4</maven-plugin-annotations.version>
+    <maven-file-management.version>3.0.0</maven-file-management.version>
+
     <maven-plugin-tools-annotations.version>3.4</maven-plugin-tools-annotations.version>
     <maven-plugin-tools-api.version>3.4</maven-plugin-tools-api.version>
     <maven-plugin-testing-harness.version>3.3.0</maven-plugin-testing-harness.version>
-    <maven-plugin-plugin.version>3.4</maven-plugin-plugin.version>
-    <maven-checkstyle-plugin.version>2.16</maven-checkstyle-plugin.version>
-    <maven-invoker-plugin.version>2.0.0</maven-invoker-plugin.version>
-    <maven-gpg-plugin.version>1.5</maven-gpg-plugin.version>
 
-    <jersey-client.version>2.22.1</jersey-client.version>
-    <jersey-media-moxy.version>2.0</jersey-media-moxy.version>
-    <jersey-json.version>1.19</jersey-json.version>
-    <file-management.version>1.2</file-management.version>
+    <jax-ws-api.version>2.1.1</jax-ws-api.version>
+    <jersey-common.version>2.29.1</jersey-common.version>
     <apache-commons-text.version>1.8</apache-commons-text.version>
+    <nexus-staging-maven-plugin.version>1.6.3</nexus-staging-maven-plugin.version>
 
-    <!-- Plexus component versions -->
-    <plexus-compiler-api.version>2.8.5</plexus-compiler-api.version>
-    <plexus-utils.version>3.3.0</plexus-utils.version>
-    <plexus-build-api.version>0.0.7</plexus-build-api.version>
-    <plexus-resources.version>1.1.0</plexus-resources.version>
     <plexus-io.version>3.2.0</plexus-io.version>
-    <plexus-component-annotations.version>2.1.0</plexus-component-annotations.version>
-    <plexus-component-metadata.version>2.1.0</plexus-component-metadata.version>
   </properties>
 
   <dependencies>
@@ -90,33 +78,12 @@
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-plugin-api</artifactId>
-      <version>${maven-plugin-api.version}</version>
     </dependency>
 
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-core</artifactId>
       <version>${maven-core.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>maven-artifact</artifactId>
-      <version>${maven-artifact.version}</version>
-      <scope>provided</scope>
-    </dependency>
-
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>maven-compat</artifactId>
-      <version>${maven-compat.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>maven-aether-provider</artifactId>
-      <version>${maven-aether-provider.version}</version>
-      <scope>test</scope>
     </dependency>
 
     <dependency>
@@ -141,7 +108,6 @@
     <dependency>
       <groupId>org.apache.maven.plugin-tools</groupId>
       <artifactId>maven-plugin-annotations</artifactId>
-      <version>${maven-plugin-annotations.version}</version>
       <!--
           Annotations are not needed for plugin execution.
           Therefore, use provided scope, to remove this from compile path.
@@ -163,32 +129,6 @@
       <type>jar</type>
     </dependency>
 
-
-    <!-- Plexus components dependencies.    -->
-    <dependency>
-      <groupId>org.codehaus.plexus</groupId>
-      <artifactId>plexus-compiler-api</artifactId>
-      <version>${plexus-compiler-api.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.codehaus.plexus</groupId>
-      <artifactId>plexus-utils</artifactId>
-      <version>${plexus-utils.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.sonatype.plexus</groupId>
-      <artifactId>plexus-build-api</artifactId>
-      <version>${plexus-build-api.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.codehaus.plexus</groupId>
-      <artifactId>plexus-resources</artifactId>
-      <version>${plexus-resources.version}</version>
-    </dependency>
-
     <dependency>
       <groupId>org.codehaus.plexus</groupId>
       <artifactId>plexus-io</artifactId>
@@ -196,63 +136,21 @@
     </dependency>
 
     <dependency>
-      <groupId>org.codehaus.plexus</groupId>
-      <artifactId>plexus-component-annotations</artifactId>
-      <version>${plexus-component-annotations.version}</version>
-    </dependency>
-
-    <dependency>
       <groupId>org.apache.maven.shared</groupId>
       <artifactId>file-management</artifactId>
-      <version>${file-management.version}</version>
+      <version>${maven-file-management.version}</version>
     </dependency>
 
     <dependency>
       <groupId>org.glassfish.jersey.core</groupId>
-      <artifactId>jersey-client</artifactId>
-      <version>${jersey-client.version}</version>
+      <artifactId>jersey-common</artifactId>
+      <version>${jersey-common.version}</version>
     </dependency>
 
     <dependency>
-      <groupId>org.glassfish.jersey.connectors</groupId>
-      <artifactId>jersey-grizzly-connector</artifactId>
-      <version>${jersey-client.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.glassfish.jersey.connectors</groupId>
-      <artifactId>jersey-apache-connector</artifactId>
-      <version>${jersey-client.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.glassfish.jersey.connectors</groupId>
-      <artifactId>jersey-jetty-connector</artifactId>
-      <version>${jersey-client.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>com.sun.jersey</groupId>
-      <artifactId>jersey-json</artifactId>
-      <version>${jersey-json.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
-      <version>2.2.3</version>
-    </dependency>
-
-    <dependency>
-      <groupId>com.fasterxml.jackson.module</groupId>
-      <artifactId>jackson-module-jaxb-annotations</artifactId>
-      <version>2.4.0</version>
-    </dependency>
-
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-core</artifactId>
-      <version>2.2.3</version>
+      <groupId>javax.ws.rs</groupId>
+      <artifactId>javax.ws.rs-api</artifactId>
+      <version>${jax-ws-api.version}</version>
     </dependency>
 
     <dependency>
@@ -260,7 +158,6 @@
       <artifactId>commons-text</artifactId>
       <version>${apache-commons-text.version}</version>
     </dependency>
-
   </dependencies>
 
   <distributionManagement>
@@ -346,7 +243,6 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-gpg-plugin</artifactId>
-            <version>${maven-gpg-plugin.version}</version>
             <executions>
               <execution>
                 <id>sign-artifacts</id>
@@ -417,7 +313,6 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-plugin-plugin</artifactId>
-        <version>${maven-plugin-plugin.version}</version>
         <executions>
           <execution>
             <id>default-descriptor</id>
@@ -436,22 +331,8 @@
       </plugin>
 
       <plugin>
-        <groupId>org.codehaus.plexus</groupId>
-        <artifactId>plexus-component-metadata</artifactId>
-        <version>${plexus-component-metadata.version}</version>
-        <executions>
-          <execution>
-            <goals>
-              <goal>generate-metadata</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-
-      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-checkstyle-plugin</artifactId>
-        <version>${maven-checkstyle-plugin.version}</version>
         <configuration>
           <configLocation>config/maven_checks.xml</configLocation>
           <headerLocation>config/maven-header.txt</headerLocation>

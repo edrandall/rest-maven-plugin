@@ -19,36 +19,43 @@
  */
 package com.github.cjnygard.mvn.rest;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.io.UnsupportedEncodingException;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.ProtocolException;
 import java.net.URI;
-import java.util.ArrayList;
-import java.util.List;
+import java.net.URL;
+import java.net.URLConnection;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.charset.UnsupportedCharsetException;
 import java.util.Map;
 import java.util.Properties;
+import java.util.stream.Collectors;
 
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.ClientBuilder;
-import javax.ws.rs.client.Entity;
-import javax.ws.rs.client.Invocation;
-import javax.ws.rs.client.WebTarget;
+import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.Response.Status.Family;
+import javax.ws.rs.core.UriBuilder;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.text.StringSubstitutor;
 
 import org.apache.maven.execution.MavenSession;
-import org.apache.maven.model.FileSet;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecution;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.descriptor.PluginDescriptor;
 import org.apache.maven.plugins.annotations.Component;
+import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
@@ -61,85 +68,22 @@ import org.apache.maven.settings.crypto.SettingsDecrypter;
 import org.apache.maven.settings.crypto.SettingsDecryptionRequest;
 import org.apache.maven.settings.crypto.SettingsDecryptionResult;
 
-//import org.codehaus.plexus.components.io.filemappers.AbstractFileMapper;
-//import org.codehaus.plexus.components.io.filemappers.IdentityMapper;
-import org.codehaus.plexus.components.io.filemappers.FileMapper;
-//import org.codehaus.plexus.component.annotations.Component;
-import org.codehaus.plexus.util.FileUtils;
-import org.sonatype.plexus.build.incremental.BuildContext;
 
 /**
- * Make REST request, sending file contents and saving results to a file.
+ * Make a REST request, using GET or POST methods.
+ * GET makes a simple HTTP query.
+ * POST sends an HTML form or JSON request.
+ * Response is saved to a file.
  *
- * This plugin is meant to provide an easy way to interface to REST services via
- * the POST operation to send data files to the REST URL and retrieve (and
- * store) the results.
- *
- * One typical example is to send *.md documentation files to a markdown-to-pdf
- * conversion service (see http://github.com/cjnygard/md2pdf) and store the
- * resulting *.pdf file locally.
+ * This plugin provides an interface to REST services via HTTP,
+ * retrieving and storing the response.
  */
-@Mojo( name = "rest-request" )
+@Mojo( name = "rest-request", defaultPhase=LifecyclePhase.DEPLOY, threadSafe=true)
 public class Plugin extends AbstractMojo
 {
 
-    public final class FileSetTransformer
-    {
-
-        private final FileSet fileSet;
-
-        private FileSetTransformer( FileSet fileSet )
-        {
-            this.fileSet = fileSet;
-        }
-
-        public List<File> toFileList() throws MojoExecutionException
-        {
-            return toFileList( fileSet );
-        }
-
-        public List<File> toFileList( FileSet fs ) throws MojoExecutionException
-        {
-            try
-            {
-                if ( fs.getDirectory() != null )
-                {
-                    File directory = new File( fs.getDirectory() );
-                    String includes = toString( fs.getIncludes() );
-                    String excludes = toString( fs.getExcludes() );
-                    return FileUtils.getFiles( directory, includes, excludes );
-                }
-                else
-                {
-                    getLog().warn( String.format( "Fileset [%s] directory empty", fs.toString() ) );
-                    return new ArrayList<>();
-                }
-            }
-            catch ( IOException e )
-            {
-                throw new MojoExecutionException( String.format( "Unable to get paths to fileset [%s]", fs.toString() ),
-                        e );
-            }
-        }
-
-        private String toString( List<String> strings )
-        {
-            StringBuilder sb = new StringBuilder();
-            for ( String string : strings )
-            {
-                if ( sb.length() > 0 )
-                {
-                    sb.append( ", " );
-                }
-                sb.append( string );
-            }
-            return sb.toString();
-        }
-    }
-
     public class ErrorInfo
     {
-
         private final int errorCode;
         private final String message;
 
@@ -149,10 +93,16 @@ public class Plugin extends AbstractMojo
             message = msg;
         }
 
-        public ErrorInfo( String msg )
-        {
-            errorCode = -1;
-            message = msg;
+        public boolean isOK() {
+            return(errorCode >= 200 && errorCode <= 299);
+        }
+
+        public int getCode() {
+            return errorCode;
+        }
+
+        public String getMessage() {
+            return message;
         }
 
         @Override
@@ -164,37 +114,7 @@ public class Plugin extends AbstractMojo
         }
     }
 
-    public final class FileErrorInfo extends ErrorInfo
-    {
-
-        private final String filename;
-
-        public FileErrorInfo( String fn, ErrorInfo error )
-        {
-            super( error.errorCode, error.message );
-            filename = fn;
-        }
-
-        public FileErrorInfo( String fn, int code, String msg )
-        {
-            super( code, msg );
-            filename = fn;
-        }
-
-        public FileErrorInfo( String fn, String msg )
-        {
-            super( msg );
-            filename = fn;
-        }
-
-        @Override
-        public String toString()
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.append( filename ).append( super.toString() );
-            return sb.toString();
-        }
-    }
+    private static final String UTF8 = StandardCharsets.UTF_8.name();
 
     @Parameter( defaultValue = "${session}", readonly = true )
     private MavenSession session;
@@ -291,49 +211,24 @@ public class Plugin extends AbstractMojo
     @Parameter( property = "method" )
     private String method = "POST";
 
-    /**
-     * A list of {@link org.apache.maven.model.FileSet} rules to select files
-     * and directories.
-     *
-     * This list of <code>fileset</code> elements will be used to gather all the
-     * files to be submitted in the REST request. One REST request will be made
-     * per file.
-     */
-    @Parameter( property = "filesets" )
-    private List<FileSet> filesets = new ArrayList<>();
 
     /**
-     * A {@link org.apache.maven.model.FileSet} rule to select files to send in
-     * the REST request.
+     * Path where REST response result file is stored.
      *
-     * The fileset will be used to gather all the files to be submitted in the
-     * REST request. One REST request will be made per file.
-     *
-     * Internally, this element will be added to the list of
-     * <code>filesets</code>, so it will be processed in addition to the list of
-     * <code>filesets</code>
-     */
-    @Parameter( property = "fileset" )
-    private FileSet fileset;
-
-    /**
-     * Path where REST query result files are stored.
-     *
-     * Defaults to <code>${project.build.directory}/rest</code>
+     * Defaults to <code>${project.build.directory}</code>
      *
      */
-    @Parameter( defaultValue = "${project.build.directory}/rest", property = "outputDir" )
+    @Parameter( defaultValue = "${project.build.directory}", property = "outputDir" )
     private File outputDir;
 
     /**
-     * Filename where REST GET query result files are stored, if no fileset is
-     * defined.
+     * Filename where REST response file is stored.
      *
      * Defaults to <code>rest.file</code>
      *
      */
-    @Parameter( defaultValue = "rest.file", property = "outputFilename" )
-    private File outputFilename;
+    @Parameter( defaultValue = "rest-response.out", property = "outputFilename" )
+    private String outputFilename;
 
     /**
      * A <code>map</code> of query parameters to add to the REST request URL.
@@ -345,6 +240,12 @@ public class Plugin extends AbstractMojo
     private Map<String, String> queryParams;
 
     /**
+     * A <code>map</code> of form fields to POST to the REST request URL.
+     */
+    @Parameter( property = "formFields" )
+    private Map<String, String> formFields;
+
+    /**
      * A <code>map</code> of query headers to add to the REST request.
      *
      * The <code>headers</code> element will provide a way to add multiple
@@ -354,64 +255,29 @@ public class Plugin extends AbstractMojo
     private Map<String, String> headers;
 
     /**
-     * A {@link org.codehaus.plexus.components.io.filemappers.FileMapper} object
-     * to generate output filenames.
-     *
-     * Provide a FileMapper to generate the output filename which is used to
-     * store the REST query results.
-     *
-     * Unlike the <code>fileset</code> process, an individual
-     * <code>fileMapper</code> element will be used *instead of* the
-     * <code>fileMappers</code> list. If multiple <code>fileMapper</code>
-     * elements must be applied to each file, then do not specify the individual
-     * <code>fileMapper</code> element.
-     */
-    @Parameter( property = "filemapper" )
-    private FileMapper fileMapper;
-
-    /**
-     * A list of <code>fileMapper</code> rules to generate output filenames.
-     *
-     */
-    @Parameter( property = "filemappers" )
-    private List<FileMapper> fileMappers;
-
-    /**
      * The type of the data sent by the REST request.
      *
-     * The data type of the REST request data. Default
-     * <code>MediaType.TEXT_PLAIN_TYPE</code>
+     * Default: <code>MediaType.APPLICATION_FORM_URLENCODED</code>
      *
-     * If this is specified, use the elements for MediaType class:
-     * 
      * <pre>
-     *     &lt;requestType&gt;
-     *       &lt;type&gt;application&lt;/type&gt;
-     *       &lt;subtype&gt;json&lt;/subtype&gt;
-     *     &lt;/requestType&gt;
+     *     &lt;requestType&gt;application/x-www-form-urlencoded&lt;/requestType&gt;
      * </pre>
      */
     @Parameter
-    private MediaType requestType = MediaType.TEXT_PLAIN_TYPE;
+    private String requestType = MediaType.APPLICATION_FORM_URLENCODED;
 
     /**
-     * The type of the data returned by the REST request.
+     * The type of data expected from the REST response.
      *
-     * The expected data type of the REST response. Default
-     * <code>MediaType.APPLICATION_OCTET_STREAM_TYPE</code>
+     * Default: <code>MediaType.APPLICATION_JSON</code>
      *
-     * See <code>requestType</code> for example of usage.
+     * <pre>
+     *     &lt;responseType&gt;application/json&lt;/responseType&gt;
+     * </pre>
      */
     @Parameter
-    private MediaType responseType = MediaType.APPLICATION_OCTET_STREAM_TYPE;
+    private String responseType = MediaType.APPLICATION_JSON;
 
-    /**
-     * The Plexus BuildContext is used to identify files or directories modified
-     * since last build, implying functionality used to define if java
-     * generation must be performed again.
-     */
-    @Component( role = org.sonatype.plexus.build.incremental.BuildContext.class )
-    private BuildContext buildContext;
 
     /**
      * Note that the execution parameter will be injected ONLY if this plugin is
@@ -434,17 +300,6 @@ public class Plugin extends AbstractMojo
         return objectOrNull;
     }
 
-    /**
-     * The Plexus BuildContext is used to identify files or directories modified
-     * since last build, implying functionality used to define if java
-     * generation must be performed again.
-     *
-     * @return the active Plexus BuildContext.
-     */
-    protected final BuildContext getBuildContext()
-    {
-        return getInjectedObject( buildContext, "buildContext" );
-    }
 
     /**
      * @return The active MavenProject.
@@ -454,82 +309,13 @@ public class Plugin extends AbstractMojo
         return getInjectedObject( project, "project" );
     }
 
+
     /**
      * @return The active MojoExecution.
      */
     public MojoExecution getExecution()
     {
         return getInjectedObject( execution, "execution" );
-    }
-
-    protected List<File> getFilesToProcess() throws MojoExecutionException
-    {
-        List<File> files = new ArrayList<>();
-        if ( null != getFileset() )
-        {
-            if ( null == getFilesets() )
-            {
-                filesets = new ArrayList<>();
-            }
-            getFilesets().add( getFileset() );
-
-        }
-        if ( null != getFilesets() )
-        {
-            for ( FileSet fs : getFilesets() )
-            {
-                if ( (null != fs) && (null != fs.getDirectory()) )
-                {
-                    FileSetTransformer fileMgr = new FileSetTransformer( fs );
-                    files.addAll( fileMgr.toFileList() );
-                }
-            }
-        }
-        return files;
-    }
-
-    protected String readStream( InputStream in ) throws MojoExecutionException
-    {
-        byte buf[] = new byte[1024];
-        int sz = 0;
-        StringBuilder result = new StringBuilder();
-        try
-        {
-            while ( sz != -1 )
-            {
-                sz = in.read( buf );
-                result.append( buf );
-            }
-            return result.toString();
-        }
-        catch ( IOException e )
-        {
-            throw new MojoExecutionException( "Unable to read result stream", e );
-        }
-
-    }
-
-    protected <T> String wrap( String prefix, String suffix, List<T> tokens )
-    {
-        StringBuilder str = new StringBuilder();
-        for ( T s : tokens )
-        {
-            str.append( prefix );
-            str.append( s.toString() );
-            str.append( suffix );
-        }
-        return str.toString();
-    }
-
-    protected <T> String join( String delim, List<T> tokens )
-    {
-        StringBuilder str = new StringBuilder();
-        for ( T s : tokens )
-        {
-            str.append( s.toString() );
-            str.append( delim );
-        }
-        return str.toString().substring( 0, -delim.length() );
     }
 
     protected void pipeToFile( InputStream stream, File outputFile ) throws IOException
@@ -547,29 +333,6 @@ public class Plugin extends AbstractMojo
         IOUtils.closeQuietly( outStream );
     }
 
-    protected String remapFilename( String filename )
-    {
-        String remappedName = filename;
-        if ( null != getFileMapper() )
-        {
-            return getFileMapper().getMappedFileName( filename );
-        }
-        else
-        { // iteratively modify the filename, apply all mappers in order
-            if ( null != getFileMappers() )
-            {
-                for ( FileMapper fm : getFileMappers() )
-                {
-                    if ( null != fm )
-                    {
-                        remappedName = fm.getMappedFileName( remappedName );
-                    }
-                }
-            }
-        }
-
-        return remappedName;
-    }
 
     protected boolean validateOutputDir() throws MojoExecutionException
     {
@@ -577,14 +340,14 @@ public class Plugin extends AbstractMojo
         {
             if ( null == getOutputDir() )
             {
-                outputDir = new File( getProject().getBasedir(), "rest" );
+                outputDir = getProject().getBasedir();
             }
 
             if ( !outputDir.isDirectory() )
             {
                 if ( outputDir.isFile() )
                 {
-                    getLog().error( String.format( "Error: [%s] is not a directory", outputDir.getCanonicalPath() ) );
+                    getLog().error( String.format( "Error: OutputDir [%s] is a file", outputDir.getCanonicalPath() ) );
                 }
                 else
                 {
@@ -592,12 +355,10 @@ public class Plugin extends AbstractMojo
                     {
                         getLog().error(
                                 String.format( "Error: Unable to create path[%s]", outputDir.getCanonicalPath() ) );
-
                     }
                 }
             }
         }
-
         catch ( IOException ex )
         {
             getLog().error( String.format( "IOException: [%s]", ex.toString() ) );
@@ -618,8 +379,13 @@ public class Plugin extends AbstractMojo
         return result.getServer();
     }
 
+    /**
+     * Find the Server for given serverId in the settings config.
+     * @param serverId the serverId to find
+     * @return the Server
+     * @throws MojoExecutionException if serverId is not found
+     */
     private Server findServer(String serverId) throws MojoExecutionException {
-        Server server = null;
         for (Server s : settings.getServers()) {
             if (s.getId().equals(serverId)) {
                 return( s );
@@ -628,118 +394,245 @@ public class Plugin extends AbstractMojo
         throw new MojoExecutionException("serverId not found in settings: " + serverId);
     }
 
+    /**
+     * Main plugin execution method.
+     */
     @Override
     public void execute() throws MojoExecutionException
     {
         validateOutputDir();
-        getLog().info( String.format( "Output dir [%s]", getOutputDir().toString() ) );
+        getLog().debug( String.format( "Output dir: [%s]", getOutputDir().toString() ) );
 
         Properties mvnProps = project.getProperties();
         if (serverId != null && serverId.length() > 0) {
             Server serverCreds = decryptServerCredentials(serverId);
-            mvnProps.put(serverId+".username", serverCreds.getUsername());
-            mvnProps.put(serverId+".password", serverCreds.getPassword());
+            getLog().debug( String.format( "Setting properties for serverId: [%s] credentials", serverId ) );
+            mvnProps.put("server.username", serverCreds.getUsername());
+            getLog().debug( String.format( "Set property [server.username]=[%s]", serverCreds.getUsername() ) );
+            mvnProps.put("server.password", serverCreds.getPassword());
+            getLog().debug( String.format( "Set property [server.password]=[%s]", serverCreds.getPassword().replaceAll(".", "*") ) );
+        }
+        getLog().debug("mvnprops="+mvnProps);
+
+        UriBuilder uriBuilder = UriBuilder.fromUri( getEndpoint() );
+        getLog().debug( String.format( "Endpoint URI [%s]", uriBuilder ) );
+
+        if ( null != getResource() ) {
+            getLog().debug( String.format( "Appending resource [%s]", getResource() ) );
+            uriBuilder.path( getResource() );
+            getLog().debug( String.format( "Resource URI [%s]", uriBuilder ) );
         }
 
-        Client client = ClientBuilder.newClient();
+        // Load up the query parameters, if set
+        addQueryParams(uriBuilder, mvnProps);
+        getLog().debug( String.format( "Query URI [%s]", uriBuilder ) );
 
-        WebTarget baseTarget = client.target( getEndpoint() );
-        if ( null != getResource() )
-        {
-            getLog().debug( String.format( "Setting resource [%s]", getResource() ) );
-            baseTarget = baseTarget.path( getResource() );
-        }
+        // Prepare the HTTP connection.  Set the request method and headers.
+        HttpURLConnection connection = prepareConnection(uriBuilder, mvnProps);
 
-        // Load up the query parameters if they exist
-        if ( null != getQueryParams() )
-        {
-            for ( String k : getQueryParams().keySet() )
-            {
-                String param = getQueryParams().get( k );
-                param = StringSubstitutor.replace(param, mvnProps);
-                baseTarget = baseTarget.queryParam( k, param );
-                getLog().debug( String.format( "Param [%s:%s]", k, param ) );
-            }
-        }
+        // Send the request body for POST, PUT
+        writeRequestBody(connection, mvnProps);
 
-        Invocation.Builder builder = baseTarget.request( getRequestType() ).accept( getResponseType() );
-        // load up the header info
-        if ( null != getHeaders() )
-        {
-            for ( String k : getHeaders().keySet() )
-            {
-                String hdr = getHeaders().get( k );
-                hdr = StringSubstitutor.replace(hdr, mvnProps);
-                builder = builder.header( k, hdr );
-                getLog().debug( String.format( "Header [%s:%s]", k, hdr ) );
-            }
-        }
-        getLog().info( String.format( "Endpoint: [%s %s]", getMethod(), baseTarget.getUri() ) );
+        ErrorInfo status = processResponse(connection);
+        getLog().info("Finished - status="+status);
+    }
 
-        List<ErrorInfo> errorFiles = new ArrayList<>();
-        List<File> files = getFilesToProcess();
-        if ( (null == files) || (files.size() <= 0) )
-        {
-            if ( !getMethod().equalsIgnoreCase( "GET" ) )
-            {
-                getLog().info( "No files to process" );
-                return;
-            }
-            else
-            {
-                getLog().debug( "GET request" );
-                ErrorInfo result = processResponse( builder.method( getMethod() ),
-                        remapFilename( getOutputFilename().getName() ) );
-                if ( result != null )
-                {
-                    errorFiles.add( result );
-                }
-            }
-        }
+    /**
+     * Prepare to make a connection to the given URI.
+     * @param uriBuilder the built URI
+     * @param mvnProps Properties to be substitutes in Headers.
+     * @return the HttpURLConnection
+     * @throws MojoExecutionException in case of any failure
+     */
+    private HttpURLConnection prepareConnection(UriBuilder uriBuilder, Properties mvnProps) throws MojoExecutionException {
+        try {
+            URL url = uriBuilder.build().toURL();
+            getLog().info( String.format( "Request URL: [%s %s]", getMethod(), url) );
+            HttpURLConnection connection = (HttpURLConnection)url.openConnection();
+            connection.setRequestMethod( getMethod() );
 
-        for ( File f : files )
-        {
-            getLog().debug( String.format( "Submitting file [%s]", f.toString() ) );
-            ErrorInfo result = processResponse( builder.method( getMethod(), Entity.entity( f, getRequestType() ) ),
-                    remapFilename( f.getName() ) );
-            if ( result != null )
-            {
-                errorFiles.add( new FileErrorInfo( f.getPath(), result ) );
-            }
-        }
+            // set the request headers
+            addHeaders(connection, mvnProps);
 
-        if ( errorFiles.size() > 0 )
-        {
-            throw new MojoExecutionException(
-                    String.format( "Unable to process files:\n%s", wrap( "  ", "\n", errorFiles ) ) );
+            return connection;
+
+        } catch (MalformedURLException mux) {
+            throw new MojoExecutionException("Malformed endpoint/resource path:"+endpoint, mux);
+        } catch (ProtocolException px) {
+            throw new MojoExecutionException("Invalid request method:"+method+" for endpoint:"+endpoint, px);
+        } catch (IOException iox) {
+            throw new MojoExecutionException("Unable to openConnection to endpoint:"+endpoint, iox);
         }
     }
 
-    private ErrorInfo processResponse( Response response, String outputFilename )
-    {
-        if ( response.getStatusInfo().getFamily() == Family.SUCCESSFUL )
-        {
-            getLog().debug( String.format( "Status: [%d]", response.getStatus() ) );
-            InputStream in = response.readEntity( InputStream.class );
-            try
-            {
-                File of = new File( getOutputDir(), outputFilename );
-                pipeToFile( in, of );
-            }
-            catch ( IOException ex )
-            {
-                getLog().debug( String.format( "IOException: [%s]", ex.toString() ) );
-                return new ErrorInfo( String.format( "IOException: [%s]", ex.getMessage() ) );
-            }
+    /**
+     * Set the connection Content-Type, Aaccept and any additional headers.
+     * Replace any placeholders in the header values by mvnProps.
+     * @param connection the URLConnection
 
+     * @param mvnProps property placeholders to replace
+     */
+    private void addHeaders(URLConnection connection, Properties mvnProps) {
+       addHeader( connection, HttpHeaders.CONTENT_TYPE, getRequestType());
+       addHeader( connection, HttpHeaders.ACCEPT, getResponseType());
+
+       Map<String,String> headers = getHeaders();
+       if ( headers != null ) {
+           for ( Map.Entry<String,String> e :headers.entrySet() ) {
+               String key = e.getKey();
+               String value = StringSubstitutor.replace(e.getValue(), mvnProps);
+               if (value == null) {
+                   getLog().warn( String.format("header [%s] has NULL value after placeholder substitution - try using $${..}", key));
+                   value = "";
+                }
+                addHeader( connection, key, value);
+            }
         }
-        else
-        {
-            getLog().warn( String.format( "Error code: [%d]", response.getStatus() ) );
-            getLog().debug( response.getEntity().toString() );
-            return new ErrorInfo( response.getStatus(), response.getEntity().toString() );
+    }
+
+    /**
+     * Set a single header
+     * @param connection to set the header on
+     * @param name header name
+     * @param value header value
+     */
+    private void addHeader(URLConnection connection, String name, String value) {
+        connection.setRequestProperty(name, value);
+        getLog().debug( String.format( "Added header: [%s:%s]", name, value ) );
+    }
+
+    /**
+     * Append the query parameters, if any.
+     * @param endpoint the URI
+     * @param mvnProps Properties for substitution into query parameter values
+     * @return updated endpoint URI with query appended
+     */
+    private void addQueryParams(UriBuilder uriBuilder, Properties mvnProps) {
+        // Load up the query parameters if they exist
+        if ( !isEmpty(queryParams) ) {
+            for ( Map.Entry<String,String> e : queryParams.entrySet() )
+            {
+                try {
+                    String key = URLEncoder.encode(e.getKey(), UTF8);
+                    String value = StringSubstitutor.replace(e.getValue(), mvnProps);
+                    if (value == null) {
+                        getLog().warn( String.format("queryParam [%s] has NULL value after placeholder substitution - try using $${..}", key));
+                        value = "";
+                    }
+                    value = URLEncoder.encode(value, UTF8);
+                    uriBuilder.queryParam(key, value);
+                    getLog().debug( String.format( "Added query param [%s:%s]", key, value ) );
+                } catch (UnsupportedEncodingException ex) {
+                    // UTF8 unsupported?  Never going to happen.
+                    throw new UnsupportedCharsetException("Unable to encode UTF8!");
+                }
+            }
+            getLog().debug( String.format( "URI with query: [%s]", uriBuilder ) );
+        }
+    }
+
+    /**
+     * For a POST request, write the body containing the form fields.
+     * @param connection HttpURLConnection to write the body to
+     * @param mvnProps Properties for substitution into form field values
+     * @throws MojoExecutionException in case of any failure
+     */
+    private void writeRequestBody(HttpURLConnection connection, Properties mvnProps) throws MojoExecutionException {
+        if (method.equalsIgnoreCase("POST")) {
+            if (!isEmpty(formFields)) {
+                getLog().debug( String.format( "%s request with %d formFields", method, formFields.size()) );
+                String body = prepareRequestBody(mvnProps);
+                connection.setDoOutput(true);
+                try {
+                    try(OutputStream out = connection.getOutputStream()) {
+                        byte[] data = body.getBytes(UTF8);
+                        out.write(data, 0, data.length);
+                    }
+                } catch (IOException iox) {
+                    throw new MojoExecutionException("Unable to write body to endpoint:"+connection.getURL(), iox);
+                }
+            }
+        }
+    }
+
+
+    /**
+     * Create a body containing encoded form fields for the request.
+     * @param mvnProps Properties for substitution into form field values
+     */
+    private String prepareRequestBody(Properties mvnProps) {
+        Map<String,String> formFields = getFormFields();
+        if ( !isEmpty(formFields) ) {
+            StringWriter sw = new StringWriter();
+            try(PrintWriter pw = new PrintWriter(sw)) {
+                boolean first = true;
+                for (Map.Entry<String,String> e : formFields.entrySet() )
+                {
+                    try {
+                        String key = URLEncoder.encode(e.getKey(), UTF8);
+                        String value = StringSubstitutor.replace(e.getValue(), mvnProps);
+                        if (value == null) {
+                            getLog().warn( String.format("formField [%s] has NULL value after placeholder substitution - try using $${..}", key));
+                            value = "";
+                        }
+                        value = URLEncoder.encode(value, UTF8);
+                        if (first) {
+                            first = false;
+                        } else {
+                            pw.print('&');
+                        }
+                        pw.print(key);
+                        pw.print('=');
+                        pw.print(value);
+                        getLog().debug( String.format( "Added form field: [%s:%s]", key, value ) );
+                    } catch (UnsupportedEncodingException ex) {
+                        // UTF8 unsupported?  Never going to happen.
+                        throw new UnsupportedCharsetException("Unable to encode UTF8!");
+                    }
+                }
+            }
+            return sw.toString();
         }
         return null;
+    }
+
+    /**
+     * Read the HTTP status and save the response body into a file.
+     * @param connection HttpUrlConnection to read from
+     * @return ErrorInfo encapsulating the status
+     * @throws MojoExecutionException
+     */
+    private ErrorInfo processResponse( HttpURLConnection connection ) throws MojoExecutionException
+    {
+        try {
+            ErrorInfo status = new ErrorInfo(connection.getResponseCode(), connection.getResponseMessage());
+            if ( status.isOK() ) {
+                File of = new File( getOutputDir(), getOutputFilename() );
+                try {
+                    pipeToFile( connection.getInputStream(), of );
+                }
+                catch ( IOException fx ) {
+                    throw new MojoExecutionException( String.format( "IOException writing response body to file:[%s]", of ), fx );
+                }
+            } else {
+                getLog().warn( String.format( "Error: [%s]", status ) );
+                BufferedReader br = new BufferedReader( new InputStreamReader( connection.getErrorStream() ) );
+                String errorResponse = br.lines().collect( Collectors.joining() );
+                getLog().warn( errorResponse );
+            }
+            return status;
+
+        } catch (IOException cx) {
+            throw new MojoExecutionException( String.format("IOException from connection:[%s]", connection.getURL()), cx);
+        }
+    }
+
+
+    /**
+     * Null-safe check if the specified map is empty.
+     */
+    private static boolean isEmpty(final Map<?,?> map) {
+        return map == null || map.isEmpty();
     }
 
     /**
@@ -759,22 +652,6 @@ public class Plugin extends AbstractMojo
     }
 
     /**
-     * @return the filesets
-     */
-    public List<FileSet> getFilesets()
-    {
-        return filesets;
-    }
-
-    /**
-     * @return the fileset
-     */
-    public FileSet getFileset()
-    {
-        return fileset;
-    }
-
-    /**
      * @return the outputDir
      */
     public File getOutputDir()
@@ -785,7 +662,7 @@ public class Plugin extends AbstractMojo
     /**
      * @return the outputFilename
      */
-    public File getOutputFilename()
+    public String getOutputFilename()
     {
         return outputFilename;
     }
@@ -793,7 +670,7 @@ public class Plugin extends AbstractMojo
     /**
      * @return the requestType
      */
-    public MediaType getRequestType()
+    public String getRequestType()
     {
         return requestType;
     }
@@ -801,7 +678,7 @@ public class Plugin extends AbstractMojo
     /**
      * @return the responseType
      */
-    public MediaType getResponseType()
+    public String getResponseType()
     {
         return responseType;
     }
@@ -823,19 +700,11 @@ public class Plugin extends AbstractMojo
     }
 
     /**
-     * @return the fileMapper
+     * @return the formFieldss
      */
-    public FileMapper getFileMapper()
+    public Map<String, String> getFormFields()
     {
-        return fileMapper;
-    }
-
-    /**
-     * @return the fileMappers
-     */
-    public List<FileMapper> getFileMappers()
-    {
-        return fileMappers;
+        return formFields;
     }
 
     /**
